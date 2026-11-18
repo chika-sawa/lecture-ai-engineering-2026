@@ -11,6 +11,8 @@ from datetime import datetime
 from functools import cache
 from pathlib import Path
 
+from app.config import api_error_message
+
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 # 宿題（実装）: 学習の記録の保存先。個人の記録なので .gitignore で共有しない
 LOG_DIR = Path(__file__).resolve().parent.parent / "learning_log"
@@ -84,36 +86,48 @@ def get_lecture_summary(lecture: int) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def make_quiz(lecture: int) -> str:
-    """指定した回（1始まりの整数）の用語集から確認問題を1問作り、問題と答えを返す。
+def search_materials(query: str) -> str:
+    """第1〜3回の本講義資料を検索し、関連ページの本文・タイトル・ページ番号を返す。
 
-    「第2回の確認問題を出して」「復習クイズを出して」のように、ある回の内容について
-    問題を出してほしいと頼まれたときに使う。返り値の answer は出題後に答え合わせで使う。
+    queryに調べたい内容を指定する。
     """
-    candidates = [e for e in load_glossary() if e["lecture"] == lecture]
-    if not candidates:
-        return f"第{lecture}回の用語は用語集にありません。"
-    entry = random.choice(candidates)
-    return json.dumps(
-        {"question": f"「{entry['term']}」の意味は？", "answer": entry["definition"]},
-        ensure_ascii=False,
-    )
+    from google.genai.errors import APIError
+    import sqlite3
+    from app.retrieval import search
+
+    try:
+        return json.dumps({"results": search(query)}, ensure_ascii=False)
+    except (ValueError, FileNotFoundError, sqlite3.Error) as e:
+        return json.dumps({"error": str(e), "results": []}, ensure_ascii=False)
+    except APIError as e:
+        return json.dumps({"error": api_error_message(e.code), "results": []}, ensure_ascii=False)
 
 
-def save_learning_log(title: str, content: str) -> str:
-    """学習の記録を Markdown ファイルとして learning_log/ フォルダに保存する。
+def browse_tree(node_id: str | None = None) -> str:
+    """目次とページの先頭文を返す。ページIDを指定すると全文を返す。
 
-    利用者が「今日学んだことを記録して」「この内容をメモに残して」のように、
-    学習の記録の保存を頼んだときに使う。保存してよいかの確認はこのツールを呼んだあとに
-    システムが利用者に行うので、呼ぶ前に文章で確認しなくてよい。
-    title には記録の短い題名（例: "LoRAとQLoRAの違い"）、
-    content には保存する本文（Markdown、学んだ要点や疑問）を入れる。
+    最初はnode_idを省略する。続いて返されたIDを指定して目次をたどる。
     """
-    if not content.strip():
-        return "本文が空なので保存しませんでした。"
-    # 題名をファイル名に使う。フォルダの外に書かないよう、記号や区切り文字は「_」に置き換える
-    slug = re.sub(r"[^\w\-]+", "_", title).strip("_")[:40] or "log"
-    LOG_DIR.mkdir(exist_ok=True)
-    path = LOG_DIR / f"{datetime.now():%Y%m%d-%H%M%S}_{slug}.md"
-    path.write_text(f"# {title}\n\n{content.strip()}\n", encoding="utf-8")
-    return f"保存しました: {path.relative_to(LOG_DIR.parent)}"
+    from app.retrieval import browse_tree as browse
+
+    try:
+        return json.dumps(browse(node_id), ensure_ascii=False)
+    except (ValueError, OSError) as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+
+
+def search_graph(query: str) -> str:
+    """資料を検索し、前後ページ・共通用語をたどって関連ページの本文と引用情報を返す。
+
+    queryに調べたい内容を指定する。
+    """
+    import sqlite3
+    from google.genai.errors import APIError
+    from app.retrieval import search_graph as search
+
+    try:
+        return json.dumps(search(query), ensure_ascii=False)
+    except (ValueError, OSError, sqlite3.Error) as e:
+        return json.dumps({"error": str(e)}, ensure_ascii=False)
+    except APIError as e:
+        return json.dumps({"error": api_error_message(e.code)}, ensure_ascii=False)
