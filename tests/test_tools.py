@@ -3,6 +3,7 @@
 import json
 
 from app import tools
+from app import retrieval
 
 
 def test_glossary_ids_are_unique_and_related_links_exist():
@@ -37,6 +38,28 @@ def test_search_reports_not_found():
 def test_lecture_summary():
     assert "エージェント" in tools.get_lecture_summary(3)
     assert "まだありません" in tools.get_lecture_summary(99)
+
+
+def test_search_with_neighbors_adds_adjacent_pages_without_duplicates(monkeypatch):
+    hit = {
+        "page_id": "lec02-main-p052",
+        "document_id": "lec02-main",
+        "page": 52,
+        "distance": 0.1,
+    }
+    pages = [
+        {"page_id": "lec02-main-p051", "document_id": "lec02-main", "page": 51, "content": "p51"},
+        {"page_id": "lec02-main-p052", "document_id": "lec02-main", "page": 52, "content": "p52"},
+        {"page_id": "lec02-main-p053", "document_id": "lec02-main", "page": 53, "content": "p53"},
+    ]
+    monkeypatch.setattr(retrieval, "search", lambda query: [hit])
+    monkeypatch.setattr(retrieval, "load_pages", lambda source: pages)
+
+    results = retrieval.search_with_neighbors("LoRA")
+
+    assert [result["page"] for result in results] == [51, 52, 53]
+    assert [result["neighbor_relation"] for result in results] == ["previous", "hit", "next"]
+    assert len({result["page_id"] for result in results}) == 3
 
 
 def test_default_question_of_lecture1_is_answerable_from_glossary():
